@@ -1,0 +1,18 @@
+# Clojure/Java
+target/
+classes/
+.cpcache/
+.lsp/
+*.log
+.nrepl-port
+
+# Python
+__pycache__/
+venv/
+.venv/
+
+# Project Specific
+IDEM详细设计.org
+
+# OS
+.DS_Store
