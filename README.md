@@ -1,5 +1,7 @@
 # IDEM
 
+[![Clojars Project](https://img.shields.io/clojars/v/com.github.discretewater/idem.svg)](https://clojars.org/com.github.discretewater/idem)
+
 A lightweight, reliable **Transactional Outbox + Inbox** library for Clojure services backed by PostgreSQL.
 
 It ensures **effectively-once** processing in microservices by solving the "Dual Write Problem" and handling idempotent consumption.
@@ -64,10 +66,16 @@ IDEM is designed with a **Protocol-First** architecture. While it ships with a p
 
 ### 1. Installation
 
-Add the library to your `deps.edn`.
+Add the library to your `deps.edn`:
 
 ```clojure
-{:deps {com.example/idem {:local/root "."}}}
+{:deps {com.github.discretewater/idem {:mvn/version "0.1.1"}}}
+```
+
+Or `project.clj` (Leiningen):
+
+```clojure
+[com.github.discretewater/idem "0.1.1"]
 ```
 
 ### 2. Producer (Outbox)
