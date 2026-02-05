@@ -1,10 +1,18 @@
 # IDEM
 
 [![Clojars Project](https://img.shields.io/clojars/v/com.github.discretewater/idem.svg)](https://clojars.org/com.github.discretewater/idem)
+[![cljdoc badge](https://cljdoc.org/badge/com.github.discretewater/idem)](https://cljdoc.org/d/com.github.discretewater/idem/CURRENT)
 
 A lightweight, reliable **Transactional Outbox + Inbox** library for Clojure services backed by PostgreSQL.
 
 It ensures **effectively-once** processing in microservices by solving the "Dual Write Problem" and handling idempotent consumption.
+
+## Delivery Semantics
+
+| Component | Guarantee | Description |
+| :--- | :--- | :--- |
+| **Outbox** | **At-Least-Once** | Events are guaranteed to be published. In rare cases (e.g., network failure after publish but before DB update), duplicates may be sent. |
+| **Inbox** | **Effectively-Once** | Side effects are executed exactly once per unique message ID, guarded by unique constraints and leases. |
 
 ## Features
 
@@ -69,13 +77,13 @@ IDEM is designed with a **Protocol-First** architecture. While it ships with a p
 Add the library to your `deps.edn`:
 
 ```clojure
-{:deps {com.github.discretewater/idem {:mvn/version "0.1.1"}}}
+{:deps {com.github.discretewater/idem {:mvn/version "0.1.2"}}}
 ```
 
 Or `project.clj` (Leiningen):
 
 ```clojure
-[com.github.discretewater/idem "0.1.1"]
+[com.github.discretewater/idem "0.1.2"]
 ```
 
 ### 2. Producer (Outbox)
@@ -151,6 +159,78 @@ Wrap your message handling logic with `with-idempotency`. This ensures that even
         ;; Your idempotent business logic here
         (println "Processing order:" (:payload message))))))
 ```
+
+## Configuration & Defaults
+
+### Dispatcher Options
+Passed to `dispatcher/start!`.
+
+| Parameter | Default | Description |
+| :--- | :--- | :--- |
+| `:poll-interval-ms` | `1000` | How often to poll DB for pending events (ms). |
+| `:batch-size` | `50` | Max events processed per poll cycle. |
+| `:max-attempts` | `10` | Max retries before marking as `dead`. |
+| `:initial-backoff-ms` | `1000` | Base delay for the first retry. |
+| `:backoff-multiplier` | `2` | Exponential factor. |
+
+**Backoff Formula:**
+$$ delay_n = \min(max, initial \times multiplier^{(n-1)}) + jitter $$
+*(Jitter is a random 0-10% addition to prevent thundering herds)*
+
+### Inbox Options
+Passed to `inbox/with-idempotency`.
+
+| Parameter | Default | Description |
+| :--- | :--- | :--- |
+| `:ttl-ms` | `300000` (5 min) | Lease duration. If a consumer crashes while `processing`, another instance can takeover after this time. |
+
+## Error Handling & Debugging
+
+### Retry Strategy (Outbox)
+Any exception thrown during `publisher/publish!` is considered **transient** (e.g., network glitch).
+- The event status becomes `failed`.
+- `next_attempt_at` is calculated via exponential backoff.
+- `last_error` is updated in the database for visibility.
+
+### Dead Letter Queue (DLQ)
+When `attempts >= max-attempts`, the event is considered **permanently failed** (e.g., invalid payload, schema mismatch).
+- The event status becomes `dead`.
+- It will **stop retrying** automatically.
+- `dead_at` timestamp is recorded.
+
+**How to debug dead events:**
+Query the table to inspect the payload and error:
+```sql
+SELECT event_id, attempts, last_error, payload 
+FROM idem_outbox_events 
+WHERE status = 'dead';
+```
+*Action:* After fixing the bug (or data), you can manually reset `status='pending', attempts=0` to retry.
+
+## Maintenance & Cleanup
+
+The tables (`idem_outbox_events`, `idem_inbox_messages`) will grow indefinitely. It is recommended to implement a scheduled job (e.g., cron) to clean up old records.
+
+**Recommended Policy:**
+- Keep `pending` / `failed` records indefinitely (until resolved).
+- Keep `sent` / `processed` records for a safe window (e.g., 7-30 days) for auditing/debugging.
+
+**Example Cleanup SQL:**
+
+```sql
+-- Clean Outbox
+DELETE FROM idem_outbox_events 
+WHERE status IN ('sent', 'dead') 
+  AND created_at < NOW() - INTERVAL '30 days';
+
+-- Clean Inbox
+DELETE FROM idem_inbox_messages 
+WHERE status = 'processed' 
+  AND created_at < NOW() - INTERVAL '30 days';
+```
+
+**Indexing Note:** 
+The default migrations include indices on `status` and `created_at` (composite), which ensures these delete operations remain efficient even as table size grows. It is recommended to run `VACUUM` periodically on PostgreSQL.
 
 ## Architecture & Extensibility
 
